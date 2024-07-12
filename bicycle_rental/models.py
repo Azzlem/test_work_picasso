@@ -16,6 +16,8 @@ class Bicycle(models.Model):
 
 
 class Rental(models.Model):
+    trip_price_per_min = 10
+    trip_price_total = models.FloatField(default=0)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     bicycle = models.ForeignKey(Bicycle, on_delete=models.CASCADE)
     datetime_rented = models.DateTimeField(auto_now_add=True)

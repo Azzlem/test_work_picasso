@@ -1,65 +1,106 @@
 from django.utils import timezone
-from rest_framework import generics, serializers, request, status
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import generics, serializers, status
+
 from rest_framework import permissions
 from rest_framework.permissions import IsAuthenticated
 
 from rest_framework.response import Response
+from rest_framework.views import APIView
+
 from bicycle_rental.models import Bicycle, Rental
 from bicycle_rental.permissions import NoBicycle
 from bicycle_rental.serializers import BicycleListSerializer, BicycleRentalStartSerializer, RentalSerializer
-from users.models import User
+
+from .tasks import calculate_rental_cost
 
 
-class BicycleListView(generics.ListAPIView):
-    queryset = Bicycle.objects.all().filter(rental_bicycle=False)
-    serializer_class = BicycleListSerializer
+class BicycleRentalView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
 
+    @swagger_auto_schema(
+        operation_description="Get available bicycles for rental",
+        responses={200: BicycleListSerializer(many=True)}
+    )
+    def get(self, request, *args, **kwargs):
+        free_bicycles = Bicycle.objects.filter(rental_bicycle=False)
+        serializer = BicycleListSerializer(free_bicycles, many=True)
+        return Response({'free_bicycles': serializer.data})
 
-class BicycleStartRentalView(generics.CreateAPIView):
-    serializer_class = BicycleRentalStartSerializer
-    permission_classes = [NoBicycle, permissions.IsAuthenticated]
+    @swagger_auto_schema(
+        operation_description="Rent a bicycle",
+        request_body=BicycleRentalStartSerializer,
+        responses={201: BicycleRentalStartSerializer,
+                   403: 'You cannot rent another bicycle while having an active rental.'}
+    )
+    def post(self, request, *args, **kwargs):
+        permission = NoBicycle()
+        if not permission.has_permission(request, self):
+            return Response({"detail": "You cannot rent another bicycle while having an active rental."},
+                            status=status.HTTP_403_FORBIDDEN)
 
-    def perform_create(self, serializer):
-        # Получаем данные из запроса
-        bicycle_pk = self.request.data['bicycle']
-        bicycle = Bicycle.objects.get(pk=bicycle_pk)
-        user = User.objects.get(pk=self.request.user.pk)
+        serializer = BicycleRentalStartSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        bicycle = serializer.validated_data['bicycle']
+        user = request.user
 
-        # Проверяем, не арендован ли уже выбранный велосипед
         if bicycle.rental_bicycle:
             raise serializers.ValidationError("This bicycle is already rented out.")
 
-        # Устанавливаем флаг аренды для велосипеда
         bicycle.rental_bicycle = True
         bicycle.save()
 
-        # Сохраняем аренду
         rental = serializer.save(user=user, bicycle=bicycle)
         rental.save()
 
-    def get(self, request, *args, **kwargs):
-        # Возвращает список доступных для аренды велосипедов
-        free_bicycles = Bicycle.objects.filter(rental_bicycle=False)
-        serializer = BicycleListSerializer(free_bicycles, many=True)
-        return Response({'free_bicycle': serializer.data})
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class ReturnBicycleView(generics.UpdateAPIView):
-    queryset = Rental.objects.all()
     serializer_class = RentalSerializer
     permission_classes = [IsAuthenticated]
 
-    def update(self, request, *args, **kwargs):
-        instance = self.get_object()
+    def get_queryset(self):
+        return Rental.objects.all()
 
-        if instance.datetime_rented_stop:
-            return Response({"detail": "This rental has already been returned."}, status=status.HTTP_400_BAD_REQUEST)
+    def put(self, request, *args, **kwargs):
+        try:
+            rental = Rental.objects.get(user=request.user, datetime_rented_stop=None)
+        except Rental.DoesNotExist:
+            return Response({"detail": "No active rental found for this user."}, status=status.HTTP_404_NOT_FOUND)
 
-        instance.datetime_rented_stop = timezone.now()
+        rental.datetime_rented_stop = timezone.now()
+        rental.bicycle.rental_bicycle = False
+        rental.bicycle.save()
+        rental.save()
 
-        instance.bicycle.rental_bicycle = False
-        instance.bicycle.save()
+        calculate_rental_cost.delay(rental.id)
 
-        instance.save()
-        serializer = self.get_serializer(instance)
+        serializer = RentalSerializer(rental)
         return Response(serializer.data)
+
+    def patch(self, request, *args, **kwargs):
+        try:
+            rental = Rental.objects.get(user=request.user, datetime_rented_stop=None)
+        except Rental.DoesNotExist:
+            return Response({"detail": "No active rental found for this user."}, status=status.HTTP_404_NOT_FOUND)
+
+        rental.datetime_rented_stop = timezone.now()
+        rental.bicycle.rental_bicycle = False
+        rental.bicycle.save()
+        rental.save()
+
+        calculate_rental_cost.delay(rental.id)
+
+        serializer = RentalSerializer(rental)
+        return Response(serializer.data)
+
+
+class HistoryRentalView(generics.ListAPIView):
+    serializer_class = RentalSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        rental_history = Rental.objects.filter(user=self.request.user)
+        serializer = RentalSerializer(rental_history, many=True)
+        return Response({'rental_history': serializer.data})
