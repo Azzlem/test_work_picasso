@@ -53,7 +53,8 @@ class BicycleRentalView(APIView):
         rental = serializer.save(user=user, bicycle=bicycle)
         rental.save()
 
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response({'bicycle': bicycle.id, 'user': user.id}, status=status.HTTP_201_CREATED)
 
 
 class ReturnBicycleView(generics.UpdateAPIView):

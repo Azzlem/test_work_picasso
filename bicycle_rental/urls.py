@@ -7,9 +7,9 @@ app_name = BicycleRentalConfig.name
 
 urlpatterns = [
 
-    path('bicycle/rentals/return/', ReturnBicycleView.as_view(), name='return-rental'),
+    path('bicycle/rentals/return/', ReturnBicycleView.as_view(), name='bicycle-rental-stop'),
 
-    path('bicycle/rental/', BicycleRentalView.as_view(), name='bicycle-rental'),
+    path('bicycle/rental/', BicycleRentalView.as_view(), name='bicycle-rental-start'),
 
-    path('bicycle/history/', HistoryRentalView.as_view(), name='bicycle-history')
+    path('bicycle/history/', HistoryRentalView.as_view(), name='bicycle-rental-history')
 ]
