@@ -36,7 +36,7 @@ def authenticated_client_build(api_client):
 @pytest.mark.django_db
 def test_rent_bicycle():
     bicycle = bicycle_bild()
-    authenticated_client = authenticated_client_build(api_client_bild())
+    authenticated_client, user = authenticated_client_build(api_client_bild())
     url = reverse('bicycle_rental:bicycle-rental-start')
     response = authenticated_client.post(url, {'bicycle': bicycle.id}, format='json')
     assert response.status_code == status.HTTP_201_CREATED
